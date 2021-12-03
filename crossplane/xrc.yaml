@@ -1,0 +1,13 @@
+apiVersion: cnp.example.org/v1alpha1
+kind: Cluster
+metadata:
+  name: cluster-1
+  namespace: default
+spec: {}
+---
+apiVersion: cnp.example.org/v1alpha1
+kind: Cluster
+metadata:
+  name: cluster-2
+  namespace: default
+spec: {}
