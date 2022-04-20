@@ -4,16 +4,24 @@ This repo contains a crossplane composition to spin up [virtual Kubernetes clust
 ![](argocd.png)
 
 
+## Install crossplane
+```bash
+kubectl create ns crossplane-system
+helm install crossplane --namespace crossplane-system crossplane-stable/crossplane
+curl -sL https://raw.githubusercontent.com/crossplane/crossplane/master/install.sh | sh
+```
+
 ## Install ArgoCD
 Bring up a local ArgoCD instance if you don't have a hosted one available:
 ```bash
 kubectl create ns argocd
-kubectl apply -n argocd --force -f https://raw.githubusercontent.com/argoproj/argo-cd/release-2.2/manifests/install.yaml
-kubectl -n argocd port-forward svc/argocd-server 8080:8080
+kubectl apply -n argocd --force -f https://raw.githubusercontent.com/argoproj/argo-cd/release-2.3/manifests/install.yaml
+kubectl -n argocd port-forward svc/argocd-server 8080:80
 ```
 get admin password for web login:
 ```bash
-kubectl view-secret argocd-initial-admin-secret -n argocd -q
+kubectl view-secret argocd-initial-admin-secret -n argocd -q #if you use view-secret
+kubectl get secret argocd-initial-admin-secret -n argocd -o json | jq -r '.data.password' | base64 -d #if you don't use view-secret
 ```
 
 add a user for [provider-argocd](https://github.com/crossplane-contrib/provider-argocd):
@@ -30,22 +38,18 @@ kubectl patch configmap/argocd-rbac-cm \
 ```
 create JWTs and a corresponding Kubernetes Secret, so that `provider-argocd` is able to connect to ArgoCD:
 ```bash
-ARGOCD_ADMIN_SECRET=$(kubectl view-secret argocd-initial-admin-secret -n argocd -q)
+ARGOCD_ADMIN_SECRET=$(kubectl get secret argocd-initial-admin-secret -n argocd -o json | jq -r '.data.password' | base64 -d)
 ARGOCD_ADMIN_TOKEN=$(curl -s -X POST -k -H "Content-Type: application/json" --data '{"username":"admin","password":"'$ARGOCD_ADMIN_SECRET'"}' https://localhost:8080/api/v1/session | jq -r .token)
 ARGOCD_TOKEN=$(curl -s -X POST -k -H "Authorization: Bearer $ARGOCD_ADMIN_TOKEN" -H "Content-Type: application/json" https://localhost:8080/api/v1/account/provider-argocd/token | jq -r .token)
 kubectl create secret generic argocd-credentials -n crossplane-system --from-literal=authToken="$ARGOCD_TOKEN"
 ```
 
-## Install crossplane
-```bash
-kubectl create ns crossplane-system
-helm install crossplane --namespace crossplane-system crossplane-stable/crossplane
-```
+## Install crossplane providers
 
 ### provider-helm
 install [provider-helm](https://github.com/crossplane-contrib/provider-helm) to later install the `vcluster` chart via compositions
 ```bash
-kubectl crossplane install provider crossplane/provider-helm:v0.9.0
+kubectl crossplane install provider crossplane/provider-helm:v0.10.0
 
 # in-cluster rbac, so that provider-helm is allowed to install helm charts into the host cluster
 SA=$(kubectl -n crossplane-system get sa -o name | grep provider-helm | sed -e 's|serviceaccount\/|crossplane-system:|g')
@@ -57,6 +61,9 @@ kubectl apply -f provider-helm/providerconfig.yaml
 Install [provider-argocd](https://github.com/crossplane-contrib/provider-argocd) to register the `vcluster` at ArgoCD:
 ```bash
 kubectl crossplane install provider crossplane/provider-argocd:v0.1.0
+```
+Check your argocd host (e.g. `localhost:8080` or `argocd-server.argocd.svc:443`) in provider-argocd/providerconfig.yaml
+```bash
 kubectl apply -f provider-argocd/providerconfig.yaml
 ```
 
@@ -73,14 +80,16 @@ kubectl apply -f provider-kubernetes/providerconfig.yaml
 ## Kubernetes in Kubernetes
 Now that we have everything in place we can get started and schedule some Kubernetes clusters in our host cluster.
 
-First create the composition and the corresponding composite resource definition:
+vcluster PVC's expect a default storage class. Make sure you have one (https://kubernetes.io/docs/tasks/administer-cluster/change-default-storage-class/) and appropriate PV's (https://kubernetes.io/docs/concepts/storage/persistent-volumes/#persistentvolumes-typed-hostpath).
+
+First create the composition and the corresponding composite resource definition (change the value of `--service-cidr=` if applicable):
 ```bash
-k apply -f crossplane/composition.yaml
-k apply -f crossplane/xrd.yaml
+kubectl apply -f crossplane/composition.yaml
+kubectl apply -f crossplane/xrd.yaml
 ```
 And now the actual clusters:
 ```bash
-k apply -f crossplane/xrc.yaml
+kubectl apply -f crossplane/xrc.yaml
 ```
 They will show up in the `default` namespace:
 ```bash
